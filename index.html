@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Image Metadata Cleaner</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0;
+         display: flex; justify-content: center; padding: 2rem 1rem; }
+  main { max-width: 34rem; width: 100%; }
+  h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
+  p.sub { margin-top: 0; opacity: 0.75; font-size: 0.95rem; }
+  #drop { border: 2px dashed #888; border-radius: 12px; padding: 2.5rem 1rem;
+          text-align: center; cursor: pointer; margin: 1.25rem 0; }
+  #drop.over { border-color: #3b82f6; background: rgba(59,130,246,0.08); }
+  #drop strong { display: block; font-size: 1.05rem; margin-bottom: 0.25rem; }
+  #report { font-size: 0.92rem; }
+  #report ul { padding-left: 1.2rem; }
+  #report .removed { color: #b91c1c; }
+  #report .kept { color: #15803d; }
+  #download { display: none; margin-top: 1rem; padding: 0.7rem 1.4rem; font-size: 1rem;
+              background: #2563eb; color: #fff; border: 0; border-radius: 8px; cursor: pointer; }
+  #error { color: #b91c1c; margin-top: 1rem; }
+  .note { font-size: 0.85rem; opacity: 0.75; margin-top: 1.5rem; line-height: 1.45; }
+  code { background: rgba(127,127,127,0.15); padding: 0 4px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Image Metadata Cleaner</h1>
+  <p class="sub">Remove EXIF, XMP and C2PA provenance metadata from JPEG, PNG and WebP images.
+     Everything runs in this page - your image never leaves your device.</p>
+
+  <div id="drop">
+    <strong>Drop an image here or click to choose one</strong>
+    JPEG, PNG or WebP. Pixels are copied byte-for-byte; only metadata containers are removed.
+    <input type="file" id="file" accept="image/jpeg,image/png,image/webp" hidden>
+  </div>
+
+  <div id="report"></div>
+  <button id="download">Download cleaned image</button>
+  <div id="error"></div>
+
+  <p class="note"><strong>What this does not do:</strong> invisible watermarks embedded in the
+  pixels themselves (such as SynthID, which OpenAI states is embedded in ChatGPT-generated
+  images) are part of the image data and are <em>not</em> removed. Removing them is not
+  possible without altering pixels. See the project README for sources.</p>
+</main>
+<script src="cleaner.js"></script>
+<script>
+(function () {
+  'use strict';
+  var drop = document.getElementById('drop');
+  var input = document.getElementById('file');
+  var report = document.getElementById('report');
+  var button = document.getElementById('download');
+  var error = document.getElementById('error');
+  var cleanedUrl = null;
+
+  drop.addEventListener('click', function () { input.click(); });
+  drop.addEventListener('dragover', function (e) { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', function () { drop.classList.remove('over'); });
+  drop.addEventListener('drop', function (e) {
+    e.preventDefault();
+    drop.classList.remove('over');
+    if (e.dataTransfer.files.length) handle(e.dataTransfer.files[0]);
+  });
+  input.addEventListener('change', function () {
+    if (input.files.length) handle(input.files[0]);
+  });
+
+  function esc(s) {
+    return String(s).replace(/[&<>]/g, function (c) {
+      return c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;';
+    });
+  }
+
+  function handle(file) {
+    error.textContent = '';
+    button.style.display = 'none';
+    if (cleanedUrl) { URL.revokeObjectURL(cleanedUrl); cleanedUrl = null; }
+    file.arrayBuffer().then(function (buf) {
+      var result = ImageMetadataCleaner.cleanImage(new Uint8Array(buf));
+      var r = result.report;
+      var html = '<p><strong>' + esc(file.name) + '</strong> (' + r.format.toUpperCase() + ', ' +
+        r.inputBytes + ' bytes)</p>';
+      if (r.removed.length) {
+        html += '<p>Removed ' + r.removedBytes + ' bytes of metadata:</p><ul>';
+        r.removed.forEach(function (item) {
+          html += '<li class="removed">' + esc(item.name) + ' (' + item.bytes + ' bytes)</li>';
+        });
+        html += '</ul>';
+      } else {
+        html += '<p>No metadata found - the file is already clean.</p>';
+      }
+      html += '<p>Kept (pixels and color data, copied byte-for-byte):</p><ul>';
+      r.kept.forEach(function (k) { html += '<li class="kept">' + esc(k) + '</li>'; });
+      html += '</ul>';
+      report.innerHTML = html;
+
+      var blob = new Blob([result.data], { type: file.type || 'application/octet-stream' });
+      cleanedUrl = URL.createObjectURL(blob);
+      var base = file.name.replace(/\.[^.]+$/, '');
+      var ext = r.format === 'jpeg' ? '.jpg' : '.' + r.format;
+      button.textContent = 'Download ' + base + '-cleaned' + ext + ' (' + r.outputBytes + ' bytes)';
+      button.style.display = 'inline-block';
+      button.onclick = function () {
+        var a = document.createElement('a');
+        a.href = cleanedUrl;
+        a.download = base + '-cleaned' + ext;
+        a.click();
+      };
+    }).catch(function (err) {
+      report.innerHTML = '';
+      error.textContent = err && err.message ? err.message : 'Could not read that file.';
+    });
+  }
+})();
+</script>
+</body>
+</html>
